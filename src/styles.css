@@ -1,0 +1,272 @@
+:root {
+  color: #f8fafc;
+  background: #05070b;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page-shell {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  background: #05070b;
+}
+
+.video-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: #05070b url("/teardown-poster.jpg") center / cover no-repeat;
+}
+
+.stage-video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  filter: saturate(1.08) contrast(1.06);
+  pointer-events: none;
+  transition: opacity 120ms linear;
+}
+
+.stage-video.is-active {
+  opacity: 1;
+}
+
+.video-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 58% 38%, transparent 0 42%, rgba(2, 4, 10, 0.16) 66%, rgba(2, 4, 10, 0.34)),
+    linear-gradient(90deg, rgba(2, 4, 10, 0.58), rgba(2, 4, 10, 0.08) 44%, rgba(2, 4, 10, 0.2)),
+    linear-gradient(0deg, rgba(2, 4, 10, 0.46), transparent 40%, rgba(2, 4, 10, 0.08));
+}
+
+.topbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px clamp(20px, 4vw, 56px);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.brand-mark {
+  width: 11px;
+  height: 28px;
+  border: 1px solid rgba(248, 250, 252, 0.72);
+  border-radius: 99px;
+  background: linear-gradient(#f8fafc, #94a3b8);
+  box-shadow: 0 0 30px rgba(139, 211, 255, 0.45);
+}
+
+.mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(248, 250, 252, 0.16);
+  border-radius: 999px;
+  padding: 10px 15px;
+  color: #08111f;
+  background: rgba(248, 250, 252, 0.94);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 1;
+  width: min(600px, calc(100% - 40px));
+  margin-left: clamp(20px, 6vw, 82px);
+  padding-top: min(17vh, 128px);
+}
+
+.eyebrow {
+  margin: 0 0 14px;
+  color: #8bd3ff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hero-copy h1 {
+  margin: 0;
+  max-width: 560px;
+  font-size: clamp(58px, 9vw, 118px);
+  line-height: 0.9;
+}
+
+.hero-copy p:not(.eyebrow) {
+  max-width: 440px;
+  margin: 24px 0 0;
+  color: #e2e8f0;
+  font-size: 18px;
+  line-height: 1.62;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.42);
+}
+
+.progress-hud {
+  position: absolute;
+  right: clamp(22px, 3vw, 42px);
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: auto;
+  transform: translateY(-50%);
+  border: 1px solid rgba(248, 250, 252, 0.14);
+  border-radius: 999px;
+  padding: 12px 9px;
+  color: #f8fafc;
+  background: rgba(8, 13, 20, 0.34);
+  backdrop-filter: blur(18px);
+}
+
+.progress-hud strong {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.progress-hud i {
+  position: relative;
+  width: 6px;
+  height: min(42vh, 320px);
+  overflow: hidden;
+  border: 1px solid rgba(248, 250, 252, 0.22);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.16);
+}
+
+.progress-hud b {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(180deg, #8bd3ff, #ffd166);
+  transition: height 120ms linear;
+}
+
+@media (max-width: 640px) {
+  .video-stage {
+    background-position: center top;
+  }
+
+  .stage-video {
+    object-position: center top;
+  }
+
+  .video-shade {
+    background:
+      linear-gradient(90deg, rgba(2, 4, 10, 0.48), transparent 38%, rgba(2, 4, 10, 0.18)),
+      linear-gradient(0deg, rgba(2, 4, 10, 0.74), transparent 34%, rgba(2, 4, 10, 0.16));
+  }
+
+  .topbar {
+    align-items: center;
+    flex-direction: row;
+    gap: 10px;
+    padding: 20px 16px;
+  }
+
+  .brand {
+    gap: 9px;
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  .brand-mark {
+    width: 10px;
+    height: 26px;
+    flex: 0 0 auto;
+  }
+
+  .mode-pill {
+    gap: 6px;
+    padding: 8px 11px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .hero-copy {
+    position: absolute;
+    left: 0;
+    bottom: 64px;
+    width: min(330px, calc(100% - 74px));
+    margin-left: 16px;
+    padding-top: 0;
+  }
+
+  .eyebrow {
+    margin-bottom: 9px;
+    font-size: 10px;
+    letter-spacing: 0.13em;
+  }
+
+  .hero-copy h1 {
+    max-width: 270px;
+    font-size: clamp(34px, 10.8vw, 46px);
+    line-height: 0.96;
+    text-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  .hero-copy p:not(.eyebrow) {
+    display: none;
+  }
+
+  .progress-hud {
+    right: 9px;
+    top: 52%;
+    padding: 9px 6px;
+    gap: 9px;
+    background: rgba(8, 13, 20, 0.26);
+  }
+
+  .progress-hud i {
+    width: 5px;
+    height: min(34vh, 230px);
+  }
+
+  .progress-hud strong {
+    font-size: 11px;
+  }
+}
