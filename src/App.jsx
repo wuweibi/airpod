@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const assetUrl = (path) => `${import.meta.env.BASE_URL}${path}`;
 const VIDEO_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_FORWARD || "teardown-airpod.mp4");
 const VIDEO_REVERSE_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_REVERSE || "teardown-airpod-reverse.mp4");
+const VIDEO_MINI_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_FORWARD_MINI || "mini/teardown-airpod.mp4");
+const VIDEO_REVERSE_MINI_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_REVERSE_MINI || "mini/teardown-airpod-reverse.mp4");
 const POSTER_SRC = assetUrl("teardown-poster.jpg");
 const TAIL_POSTER_SRC = assetUrl("teardown-tail.jpg");
 
@@ -14,6 +16,64 @@ function clamp(value, min = 0, max = 1) {
 
 function formatPercent(value) {
   return `${Math.round(clamp(value) * 100)}%`;
+}
+
+function detectWeakNetwork() {
+  if (typeof navigator === "undefined") return false;
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  // Browsers without NetworkInformation API (e.g. many iOS cases) default to mini profile.
+  if (!connection) return true;
+
+  const effectiveType = String(connection.effectiveType || "").toLowerCase();
+  const downlink = Number(connection.downlink || 0);
+  const rtt = Number(connection.rtt || 0);
+  const saveData = Boolean(connection.saveData);
+
+  if (saveData) return true;
+  if (effectiveType === "slow-2g" || effectiveType === "2g") return true;
+  if (effectiveType === "3g" && (downlink > 0 ? downlink <= 1.8 : true)) return true;
+  if (downlink > 0 && downlink <= 1.2) return true;
+  if (rtt > 0 && rtt >= 300) return true;
+  return false;
+}
+
+async function shouldUseMiniByProbe(url) {
+  if (typeof window === "undefined" || typeof fetch !== "function") return false;
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 2600);
+  const startedAt = performance.now();
+  const sampleBytes = 220 * 1024;
+
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) return true;
+
+    const reader = response.body.getReader();
+    let loaded = 0;
+
+    while (loaded < sampleBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        loaded += value.byteLength;
+      }
+    }
+
+    await reader.cancel().catch(() => undefined);
+    const elapsedMs = Math.max(1, performance.now() - startedAt);
+    const kbps = (loaded / 1024) / (elapsedMs / 1000);
+
+    // Conservative threshold: weak network if sample throughput is low.
+    return kbps < 320;
+  } catch {
+    return true;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function useVideoPreload(videoSources) {
@@ -26,6 +86,25 @@ function useVideoPreload(videoSources) {
   });
 
   useEffect(() => {
+    if (!videoSources.length) {
+      setState({
+        isReady: false,
+        hasError: false,
+        totalProgress: 0,
+        items: [],
+        resolvedSources: {},
+      });
+      return undefined;
+    }
+
+    setState({
+      isReady: false,
+      hasError: false,
+      totalProgress: 0,
+      items: videoSources.map((item) => ({ key: item.key, label: item.label, progress: 0 })),
+      resolvedSources: {},
+    });
+
     let cancelled = false;
     const abortController = new AbortController();
     const objectUrls = [];
@@ -36,7 +115,9 @@ function useVideoPreload(videoSources) {
         const items = previous.items.map((item, itemIndex) =>
           itemIndex === index ? { ...item, progress: clamp(progress) } : item,
         );
-        const totalProgress = items.reduce((sum, item) => sum + item.progress, 0) / items.length;
+        const totalProgress = items.length
+          ? items.reduce((sum, item) => sum + item.progress, 0) / items.length
+          : 0;
         return { ...previous, items, totalProgress };
       });
     };
@@ -552,12 +633,78 @@ function ScrollVideo({ targetProgress, onProgress, forwardSrc, reverseSrc }) {
 }
 
 export default function App() {
+  const [isWeakNetwork, setIsWeakNetwork] = useState(() => detectWeakNetwork());
+  const [networkReady, setNetworkReady] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof navigator === "undefined") return undefined;
+    let cancelled = false;
+
+    const queryMode = new URLSearchParams(window.location.search).get("video");
+    if (queryMode === "mini") {
+      setIsWeakNetwork(true);
+      setNetworkReady(true);
+      return undefined;
+    }
+    if (queryMode === "main") {
+      setIsWeakNetwork(false);
+      setNetworkReady(true);
+      return undefined;
+    }
+
+    const bootstrap = async () => {
+      const weakFromApi = detectWeakNetwork();
+      if (weakFromApi) {
+        if (!cancelled) {
+          setIsWeakNetwork(true);
+          setNetworkReady(true);
+        }
+        return;
+      }
+
+      const weakFromProbe = await shouldUseMiniByProbe(VIDEO_SRC);
+      if (!cancelled) {
+        setIsWeakNetwork(weakFromProbe);
+        setNetworkReady(true);
+      }
+    };
+
+    bootstrap();
+
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!connection || typeof connection.addEventListener !== "function") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const update = () => {
+      setIsWeakNetwork(detectWeakNetwork());
+    };
+
+    connection.addEventListener("change", update);
+    return () => {
+      cancelled = true;
+      connection.removeEventListener("change", update);
+    };
+  }, []);
+
   const preloadTargets = useMemo(
-    () => [
-      { key: "forward", label: "Forward Video", src: VIDEO_SRC },
-      { key: "reverse", label: "Reverse Video", src: VIDEO_REVERSE_SRC },
-    ],
-    [],
+    () => {
+      if (!networkReady) return [];
+      return (
+      isWeakNetwork
+        ? [
+            { key: "forward", label: "Forward Video", src: VIDEO_MINI_SRC },
+            { key: "reverse", label: "Reverse Video", src: VIDEO_REVERSE_MINI_SRC },
+          ]
+        : [
+            { key: "forward", label: "Forward Video", src: VIDEO_SRC },
+            { key: "reverse", label: "Reverse Video", src: VIDEO_REVERSE_SRC },
+          ]
+      );
+    },
+    [isWeakNetwork, networkReady],
   );
   const preload = useVideoPreload(preloadTargets);
   const targetProgress = useScrubProgress();
