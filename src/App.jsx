@@ -11,22 +11,65 @@ function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
-function useWheelScrub() {
+function useScrubProgress() {
   const [progress, setProgress] = useState(0);
   const targetRef = useRef(0);
+  const touchYRef = useRef(null);
 
   useEffect(() => {
     const wheelPixelsForFullVideo = 5200;
+    const touchPixelsForFullVideo = 2600;
+    const minTouchDelta = 1;
+
+    const applyDelta = (deltaPixels, pixelsForFullVideo) => {
+      targetRef.current = clamp(targetRef.current + deltaPixels / pixelsForFullVideo);
+      setProgress(targetRef.current);
+    };
 
     const onWheel = (event) => {
       event.preventDefault();
       const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 18 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? window.innerHeight : 1;
-      targetRef.current = clamp(targetRef.current + (event.deltaY * multiplier) / wheelPixelsForFullVideo);
-      setProgress(targetRef.current);
+      applyDelta(event.deltaY * multiplier, wheelPixelsForFullVideo);
+    };
+
+    const onTouchStart = (event) => {
+      if (!event.touches || event.touches.length === 0) return;
+      touchYRef.current = event.touches[0].clientY;
+    };
+
+    const onTouchMove = (event) => {
+      if (!event.touches || event.touches.length === 0) return;
+      const currentY = event.touches[0].clientY;
+      if (touchYRef.current == null) {
+        touchYRef.current = currentY;
+        return;
+      }
+
+      const delta = touchYRef.current - currentY;
+      if (Math.abs(delta) >= minTouchDelta) {
+        event.preventDefault();
+        applyDelta(delta, touchPixelsForFullVideo);
+        touchYRef.current = currentY;
+      }
+    };
+
+    const onTouchEnd = () => {
+      touchYRef.current = null;
     };
 
     window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel);
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+    };
   }, []);
 
   return progress;
@@ -165,7 +208,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
 }
 
 export default function App() {
-  const targetProgress = useWheelScrub();
+  const targetProgress = useScrubProgress();
   const [playbackProgress, setPlaybackProgress] = useState(0);
 
   return (
@@ -187,7 +230,7 @@ export default function App() {
           AirPod 拆解
         </motion.h1>
         <motion.p initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
-          滚轮控制拆解进度，快速前进和倒退都会平滑播放过去。
+          滑动或滚轮控制拆解进度，快速前进和倒退都会平滑播放过去。
         </motion.p>
       </section>
 
