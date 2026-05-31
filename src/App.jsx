@@ -177,10 +177,6 @@ export default function App() {
           <span className="brand-mark" />
           AirPod Teardown Study
         </a>
-        <div className="mode-pill">
-          <Film size={16} />
-          <span>视频演示</span>
-        </div>
       </header>
 
       <section className="hero-copy" id="top">
@@ -188,7 +184,7 @@ export default function App() {
           Scroll teardown video
         </motion.p>
         <motion.h1 initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }}>
-          AirPod 拆解视频
+          AirPod 拆解
         </motion.h1>
         <motion.p initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
           滚轮控制拆解进度，快速前进和倒退都会平滑播放过去。
