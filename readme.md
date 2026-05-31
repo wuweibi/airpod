@@ -1,6 +1,7 @@
+![banner.jpg](image%2Fbanner.jpg)
 # AirPod Teardown Study
 
-仅保留视频演示的 AirPod 拆解页面（已移除 3D 拆解）。
+ AirPod 拆解页面 。
 
 ## 功能
 
@@ -47,7 +48,7 @@ npm run build
 项目配置为子路径部署：
 
 ```js
-base: "/airpod/"
+base: "/"
 ```
 
-将 `docs/` 目录内容部署到服务器 `/airpod/` 路径下即可。
+将 `docs/` 目录内容部署到服务器 `/` 路径下即可。
