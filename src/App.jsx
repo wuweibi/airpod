@@ -2,9 +2,10 @@ import { motion } from "framer-motion";
 import { Film } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const VIDEO_SRC = "/teardown-airpod.mp4";
-const VIDEO_REVERSE_SRC = "/teardown-airpod-reverse.mp4";
-const POSTER_SRC = "/teardown-poster.jpg";
+const assetUrl = (path) => `${import.meta.env.BASE_URL}${path}`;
+const VIDEO_SRC = assetUrl("teardown-airpod.mp4");
+const VIDEO_REVERSE_SRC = assetUrl("teardown-airpod-reverse.mp4");
+const POSTER_SRC = assetUrl("teardown-poster.jpg");
 
 function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
@@ -131,7 +132,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
   }, [duration, onProgress]);
 
   return (
-    <div className="video-stage" aria-label="AirPod 拆解视频演示">
+    <div className="video-stage" style={{ "--poster-url": `url("${POSTER_SRC}")` }} aria-label="AirPod 拆解视频演示">
       <video
         ref={forwardRef}
         className={`stage-video ${activeVideo === "forward" ? "is-active" : ""}`}

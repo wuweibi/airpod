@@ -36,7 +36,7 @@ input {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: #05070b url("/teardown-poster.jpg") center / cover no-repeat;
+  background: #05070b var(--poster-url) center / cover no-repeat;
 }
 
 .stage-video {
