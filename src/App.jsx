@@ -580,25 +580,12 @@ export default function App() {
         <div className="loading-panel">
           <p className="loading-kicker">Preparing Experience</p>
           <h2>AirPod Teardown</h2>
-          <p className="loading-text">
-            {preload.hasError
-              ? "Network fallback enabled. Entering direct stream mode."
-              : "Dual-video assets are loading for smooth forward and reverse scrubbing."}
-          </p>
           <div className="loading-track">
             <b style={{ width: formatPercent(preload.totalProgress) }} />
           </div>
           <div className="loading-meta">
             <span>{formatPercent(preload.totalProgress)}</span>
             <Film size={14} />
-          </div>
-          <div className="loading-items">
-            {preload.items.map((item) => (
-              <div key={item.key} className="loading-item">
-                <span>{item.label}</span>
-                <span>{formatPercent(item.progress)}</span>
-              </div>
-            ))}
           </div>
         </div>
       </div>
