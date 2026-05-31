@@ -1,10 +1,10 @@
 import { motion } from "framer-motion";
 import { Film } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const assetUrl = (path) => `${import.meta.env.BASE_URL}${path}`;
-const VIDEO_SRC = assetUrl("teardown-airpod.mp4");
-const VIDEO_REVERSE_SRC = assetUrl("teardown-airpod-reverse.mp4");
+const VIDEO_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_FORWARD || "teardown-airpod.mp4");
+const VIDEO_REVERSE_SRC = assetUrl(import.meta.env.VITE_AIRPOD_VIDEO_REVERSE || "teardown-airpod-reverse.mp4");
 const POSTER_SRC = assetUrl("teardown-poster.jpg");
 const TAIL_POSTER_SRC = assetUrl("teardown-tail.jpg");
 
@@ -12,25 +12,167 @@ function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
+function formatPercent(value) {
+  return `${Math.round(clamp(value) * 100)}%`;
+}
+
+function useVideoPreload(videoSources) {
+  const [state, setState] = useState({
+    isReady: false,
+    hasError: false,
+    totalProgress: 0,
+    items: videoSources.map((item) => ({ key: item.key, label: item.label, progress: 0 })),
+    resolvedSources: {},
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const abortController = new AbortController();
+    const objectUrls = [];
+
+    const updateItemProgress = (index, progress) => {
+      if (cancelled) return;
+      setState((previous) => {
+        const items = previous.items.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, progress: clamp(progress) } : item,
+        );
+        const totalProgress = items.reduce((sum, item) => sum + item.progress, 0) / items.length;
+        return { ...previous, items, totalProgress };
+      });
+    };
+
+    const preloadOne = async (source, index) => {
+      const response = await fetch(source.src, { signal: abortController.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to preload "${source.src}" (${response.status})`);
+      }
+
+      const contentLengthHeader = response.headers.get("content-length");
+      const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
+      if (!response.body || !Number.isFinite(contentLength) || contentLength <= 0) {
+        const fallbackBlob = await response.blob();
+        updateItemProgress(index, 1);
+        return URL.createObjectURL(fallbackBlob);
+      }
+
+      const reader = response.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          loaded += value.byteLength;
+          updateItemProgress(index, loaded / contentLength);
+        }
+      }
+
+      const blob = new Blob(chunks, { type: "video/mp4" });
+      updateItemProgress(index, 1);
+      return URL.createObjectURL(blob);
+    };
+
+    const run = async () => {
+      try {
+        const sources = {};
+        const results = await Promise.all(
+          videoSources.map(async (item, index) => {
+            const blobUrl = await preloadOne(item, index);
+            return { key: item.key, blobUrl };
+          }),
+        );
+
+        for (const item of results) {
+          sources[item.key] = item.blobUrl;
+          objectUrls.push(item.blobUrl);
+        }
+
+        if (cancelled) return;
+        setState((previous) => ({
+          ...previous,
+          isReady: true,
+          totalProgress: 1,
+          items: previous.items.map((item) => ({ ...item, progress: 1 })),
+          resolvedSources: sources,
+        }));
+      } catch (error) {
+        if (cancelled || abortController.signal.aborted) return;
+        console.error(error);
+        setState((previous) => ({
+          ...previous,
+          isReady: true,
+          hasError: true,
+          totalProgress: 1,
+          items: previous.items.map((item) => ({ ...item, progress: 1 })),
+          resolvedSources: {
+            forward: videoSources.find((item) => item.key === "forward")?.src,
+            reverse: videoSources.find((item) => item.key === "reverse")?.src,
+          },
+        }));
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [videoSources]);
+
+  return state;
+}
+
 function useScrubProgress() {
   const [progress, setProgress] = useState(0);
+  const progressRef = useRef(0);
   const targetRef = useRef(0);
+  const renderedRef = useRef(0);
+  const lastInputDirectionRef = useRef(0);
+  const smoothingBoostRef = useRef(0);
   const touchYRef = useRef(null);
   const touchTimeRef = useRef(0);
   const touchVelocityRef = useRef(0);
+  const wheelVelocityRef = useRef(0);
+  const wheelReleaseTimerRef = useRef(0);
+  const lastWheelSampleAtRef = useRef(0);
   const inertiaFrameRef = useRef(0);
+  const renderFrameRef = useRef(0);
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   useEffect(() => {
     const wheelPixelsForFullVideo = 5200;
     const touchPixelsForFullVideo = 2600;
     const minTouchDelta = 1;
-    const inertiaMinVelocity = 0.06; // px/ms
+    const touchInertiaMinVelocity = 0.06; // px/ms
+    const wheelInertiaMinVelocity = 0.03; // px/ms
     const inertiaDampingPerFrame = 0.92;
     const inertiaStopVelocity = 0.015; // px/ms
+    const baseSmoothing = 0.24;
+    const emitEpsilon = 0.0007;
 
-    const applyDelta = (deltaPixels, pixelsForFullVideo) => {
+    const applyDelta = (deltaPixels, pixelsForFullVideo, source = "input") => {
+      const direction = Math.sign(deltaPixels);
+      if (direction && lastInputDirectionRef.current && direction !== lastInputDirectionRef.current) {
+        // Direction changed abruptly: temporarily increase follow speed to reduce reverse lag.
+        smoothingBoostRef.current = 0.22;
+        if (source === "touch") {
+          touchVelocityRef.current = 0;
+        }
+        if (source === "wheel") {
+          wheelVelocityRef.current = 0;
+        }
+      }
+      if (direction) {
+        lastInputDirectionRef.current = direction;
+      }
       targetRef.current = clamp(targetRef.current + deltaPixels / pixelsForFullVideo);
-      setProgress(targetRef.current);
     };
 
     const stopInertia = () => {
@@ -40,10 +182,8 @@ function useScrubProgress() {
       }
     };
 
-    const startInertia = () => {
-      const initialVelocity = touchVelocityRef.current;
-      if (Math.abs(initialVelocity) < inertiaMinVelocity) return;
-
+    const startInertia = (initialVelocity, pixelsForFullVideo, minVelocity) => {
+      if (Math.abs(initialVelocity) < minVelocity) return;
       stopInertia();
 
       let velocity = initialVelocity;
@@ -54,7 +194,7 @@ function useScrubProgress() {
         lastTime = now;
 
         const frameDelta = velocity * dt;
-        applyDelta(frameDelta, touchPixelsForFullVideo);
+        applyDelta(frameDelta, pixelsForFullVideo, "inertia");
 
         const decay = Math.pow(inertiaDampingPerFrame, dt / 16.67);
         velocity *= decay;
@@ -71,11 +211,35 @@ function useScrubProgress() {
       inertiaFrameRef.current = requestAnimationFrame(tick);
     };
 
+    const renderProgress = () => {
+      const smoothing = clamp(baseSmoothing + smoothingBoostRef.current, baseSmoothing, 0.52);
+      const next = renderedRef.current + (targetRef.current - renderedRef.current) * smoothing;
+      renderedRef.current = next;
+      smoothingBoostRef.current *= 0.86;
+      if (Math.abs(progressRef.current - next) > emitEpsilon) {
+        setProgress(next);
+      }
+      renderFrameRef.current = requestAnimationFrame(renderProgress);
+    };
+
     const onWheel = (event) => {
       event.preventDefault();
       stopInertia();
+      if (wheelReleaseTimerRef.current) {
+        clearTimeout(wheelReleaseTimerRef.current);
+        wheelReleaseTimerRef.current = 0;
+      }
       const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 18 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? window.innerHeight : 1;
-      applyDelta(event.deltaY * multiplier, wheelPixelsForFullVideo);
+      const deltaPixels = event.deltaY * multiplier;
+      applyDelta(deltaPixels, wheelPixelsForFullVideo, "wheel");
+      const now = performance.now();
+      const dt = Math.max(8, now - (lastWheelSampleAtRef.current || now - 16));
+      const instantVelocity = deltaPixels / dt;
+      wheelVelocityRef.current = wheelVelocityRef.current * 0.42 + instantVelocity * 0.58;
+      lastWheelSampleAtRef.current = now;
+      wheelReleaseTimerRef.current = setTimeout(() => {
+        startInertia(wheelVelocityRef.current, wheelPixelsForFullVideo, wheelInertiaMinVelocity);
+      }, 56);
     };
 
     const onTouchStart = (event) => {
@@ -111,7 +275,7 @@ function useScrubProgress() {
 
     const onTouchEnd = () => {
       touchYRef.current = null;
-      startInertia();
+      startInertia(touchVelocityRef.current, touchPixelsForFullVideo, touchInertiaMinVelocity);
     };
 
     window.addEventListener("wheel", onWheel, { passive: false });
@@ -119,9 +283,18 @@ function useScrubProgress() {
     window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("touchend", onTouchEnd, { passive: true });
     window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    renderFrameRef.current = requestAnimationFrame(renderProgress);
 
     return () => {
       stopInertia();
+      if (wheelReleaseTimerRef.current) {
+        clearTimeout(wheelReleaseTimerRef.current);
+        wheelReleaseTimerRef.current = 0;
+      }
+      if (renderFrameRef.current) {
+        cancelAnimationFrame(renderFrameRef.current);
+        renderFrameRef.current = 0;
+      }
       window.removeEventListener("wheel", onWheel);
       window.removeEventListener("touchstart", onTouchStart);
       window.removeEventListener("touchmove", onTouchMove);
@@ -133,7 +306,7 @@ function useScrubProgress() {
   return progress;
 }
 
-function ScrollVideo({ targetProgress, onProgress }) {
+function ScrollVideo({ targetProgress, onProgress, forwardSrc, reverseSrc }) {
   const forwardRef = useRef(null);
   const reverseRef = useRef(null);
   const transitionCanvasRef = useRef(null);
@@ -147,6 +320,8 @@ function ScrollVideo({ targetProgress, onProgress }) {
   const playRequestRef = useRef(null);
   const switchInFlightRef = useRef(false);
   const holdTimerRef = useRef(0);
+  const lastSwitchAtRef = useRef(0);
+  const lastIdleSyncAtRef = useRef(0);
 
   useEffect(() => {
     if (!duration) return;
@@ -160,8 +335,31 @@ function ScrollVideo({ targetProgress, onProgress }) {
     if (!forwardVideo || !reverseVideo || !transitionCanvas || !duration) return undefined;
 
     let frame = 0;
-    const catchUpThreshold = 0.055;
+    const catchUpThreshold = 0.032;
+    const minSwitchDistance = 0.028;
+    const switchLockMs = 90;
     const transitionFadeMs = 110;
+
+    const syncIdleVideo = (timelineTime, now, force = false) => {
+      if (!force && now - lastIdleSyncAtRef.current < 120) return;
+      lastIdleSyncAtRef.current = now;
+
+      const mappedForward = clamp(timelineTime, 0, duration);
+      const mappedReverse = clamp(duration - timelineTime, 0, duration);
+      const hardSyncGap = 0.12;
+
+      if (activeVideoRef.current === "forward") {
+        const reverseGap = mappedReverse - reverseVideo.currentTime;
+        if (Math.abs(reverseGap) > hardSyncGap) {
+          reverseVideo.currentTime = mappedReverse;
+        }
+      } else {
+        const forwardGap = mappedForward - forwardVideo.currentTime;
+        if (Math.abs(forwardGap) > hardSyncGap) {
+          forwardVideo.currentTime = mappedForward;
+        }
+      }
+    };
 
     const clearHold = () => {
       if (holdTimerRef.current) {
@@ -190,13 +388,16 @@ function ScrollVideo({ targetProgress, onProgress }) {
 
     const switchDirection = (direction, timelineTime) => {
       const nextActive = direction > 0 ? "forward" : "reverse";
+      const now = performance.now();
       if (activeVideoRef.current === nextActive || switchInFlightRef.current) return;
+      if (now - lastSwitchAtRef.current < switchLockMs) return;
 
       const outgoingVideo = activeVideoRef.current === "forward" ? forwardVideo : reverseVideo;
       const incomingVideo = nextActive === "forward" ? forwardVideo : reverseVideo;
       const incomingTime = nextActive === "forward" ? clamp(timelineTime, 0, duration) : clamp(duration - timelineTime, 0, duration);
 
       switchInFlightRef.current = true;
+      syncIdleVideo(timelineTime, now, true);
       captureFrame(outgoingVideo);
 
       forwardVideo.pause();
@@ -207,6 +408,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
         activeVideoRef.current = nextActive;
         setActiveVideo(nextActive);
         switchInFlightRef.current = false;
+        lastSwitchAtRef.current = performance.now();
         clearHold();
       };
 
@@ -246,6 +448,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
       const targetTime = targetTimeRef.current;
       const distance = targetTime - timelineTime;
       const distanceAbs = Math.abs(distance);
+      const direction = Math.sign(distance);
       const actualProgress = duration ? timelineTime / duration : 0;
 
       if (Math.abs(actualProgress - lastProgressRef.current) > 0.002) {
@@ -259,11 +462,31 @@ function ScrollVideo({ targetProgress, onProgress }) {
       }
 
       if (distanceAbs > catchUpThreshold) {
-        const direction = Math.sign(distance);
-        const rate = clamp(0.82 + distanceAbs * 0.46, 0.82, 2.25);
-        switchDirection(direction, timelineTime);
-        play(direction > 0 ? forwardVideo : reverseVideo, rate);
+        const rate = clamp(0.82 + distanceAbs * 0.52, 0.82, 2.4);
+        const needsSwitch =
+          (direction > 0 && activeVideoRef.current === "reverse") ||
+          (direction < 0 && activeVideoRef.current === "forward");
+
+        if (needsSwitch) {
+          if (distanceAbs > minSwitchDistance) {
+            switchDirection(direction, timelineTime);
+          } else {
+            forwardVideo.pause();
+            reverseVideo.pause();
+            if (activeVideoRef.current === "forward") {
+              forwardVideo.currentTime += (targetTime - forwardVideo.currentTime) * 0.26;
+            } else {
+              reverseVideo.currentTime += (duration - targetTime - reverseVideo.currentTime) * 0.26;
+            }
+            frame = requestAnimationFrame(tick);
+            return;
+          }
+        }
+
+        const currentActiveVideo = activeVideoRef.current === "forward" ? forwardVideo : reverseVideo;
+        play(currentActiveVideo, rate);
       } else {
+        syncIdleVideo(timelineTime, now);
         forwardVideo.pause();
         reverseVideo.pause();
         forwardVideo.playbackRate = 1;
@@ -303,7 +526,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
         playsInline
         poster={POSTER_SRC}
         preload="auto"
-        src={VIDEO_SRC}
+        src={forwardSrc}
         onLoadedMetadata={(event) => {
           const nextDuration = event.currentTarget.duration || 0;
           setDuration(nextDuration);
@@ -320,7 +543,7 @@ function ScrollVideo({ targetProgress, onProgress }) {
         playsInline
         poster={TAIL_POSTER_SRC}
         preload="auto"
-        src={VIDEO_REVERSE_SRC}
+        src={reverseSrc}
       />
       <canvas ref={transitionCanvasRef} className={`transition-frame ${transitionHold ? "is-active" : ""}`} />
       <div className="video-shade" />
@@ -329,12 +552,56 @@ function ScrollVideo({ targetProgress, onProgress }) {
 }
 
 export default function App() {
+  const preloadTargets = useMemo(
+    () => [
+      { key: "forward", label: "Forward Video", src: VIDEO_SRC },
+      { key: "reverse", label: "Reverse Video", src: VIDEO_REVERSE_SRC },
+    ],
+    [],
+  );
+  const preload = useVideoPreload(preloadTargets);
   const targetProgress = useScrubProgress();
   const [playbackProgress, setPlaybackProgress] = useState(0);
 
   return (
     <main className="page-shell">
-      <ScrollVideo targetProgress={targetProgress} onProgress={setPlaybackProgress} />
+      {preload.isReady ? (
+        <ScrollVideo
+          targetProgress={targetProgress}
+          onProgress={setPlaybackProgress}
+          forwardSrc={preload.resolvedSources.forward}
+          reverseSrc={preload.resolvedSources.reverse}
+        />
+      ) : (
+        <div className="video-stage preload-placeholder" style={{ "--poster-url": `url("${POSTER_SRC}")` }} />
+      )}
+
+      <div className={`loading-screen ${preload.isReady ? "is-hidden" : ""}`} aria-live="polite">
+        <div className="loading-panel">
+          <p className="loading-kicker">Preparing Experience</p>
+          <h2>AirPod Teardown</h2>
+          <p className="loading-text">
+            {preload.hasError
+              ? "Network fallback enabled. Entering direct stream mode."
+              : "Dual-video assets are loading for smooth forward and reverse scrubbing."}
+          </p>
+          <div className="loading-track">
+            <b style={{ width: formatPercent(preload.totalProgress) }} />
+          </div>
+          <div className="loading-meta">
+            <span>{formatPercent(preload.totalProgress)}</span>
+            <Film size={14} />
+          </div>
+          <div className="loading-items">
+            {preload.items.map((item) => (
+              <div key={item.key} className="loading-item">
+                <span>{item.label}</span>
+                <span>{formatPercent(item.progress)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <header className="topbar">
         <a className="brand" href="#top" aria-label="AirPod Teardown Study">
