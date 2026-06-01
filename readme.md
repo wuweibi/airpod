@@ -3,6 +3,11 @@
 
  AirPod 拆解页面 。
 
+DEMO（默认情况根据网络判断加载大文件还是小文件）: 
+- 高清：[http://airpod.pxzh.cn/?video=main](http://airpod.pxzh.cn/?video=main)
+- 普清：[http://airpod.pxzh.cn/?video=mini](http://airpod.pxzh.cn/?video=mini)
+
+
 ## 功能
 
 - 全屏视频演示
@@ -52,3 +57,10 @@ base: "/"
 ```
 
 将 `docs/` 目录内容部署到服务器 `/` 路径下即可。
+
+## 特殊操作
+并且探测完成前不会开始视频预加载，避免一上来就误加载大文件。
+另外给了强制开关，方便你验证：
+
+- ?video=mini 强制走 public/mini
+- ?video=main 强制走 public 主视频
